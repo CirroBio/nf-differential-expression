@@ -50,7 +50,7 @@ process manifest {
     path "*"
 
     output:
-    path "chart.manifest.json"
+    path "chart.manifest.pipeline.json"
 
     """#!/bin/bash
 set -e
@@ -74,7 +74,7 @@ workflow collect {
     // Format as AnnData
     anndata(all.out.toSortedList(), filtered_ch)
 
-    // Format the chart.manifest.json
+    // Format the chart.manifest.pipeline.json
     manifest(anndata.out.vt_json.toSortedList())
 
 }
