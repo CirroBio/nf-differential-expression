@@ -3,6 +3,7 @@
 import logging
 import pandas as pd
 import os
+import re
 
 
 def get_sep(fp):
@@ -81,6 +82,32 @@ def sample_mask_initial_numeral(s):
         return f"X{s}"
     else:
         return s
+
+
+def sanitize_label(label):
+    """
+    Limit a label to the characters which are safe to use both in a file name
+    and as an R column name. Periods are replaced along with everything else
+    because the downstream templates parse the manifest file name by
+    splitting it on periods.
+    """
+
+    sanitized = re.sub('[^0-9a-zA-Z_]', '_', label)
+
+    # R prepends an X to any column name which does not start with a letter
+    if not sanitized[:1].isalpha():
+        sanitized = f"X{sanitized}"
+
+    return sanitized
+
+
+def validate_unique(labels):
+    """Validate that no two values were sanitized to the same label."""
+
+    for label in set(labels.values()):
+        collisions = [val for val, lab in labels.items() if lab == label]
+        msg = f"Values cannot share the label {label}: {', '.join(collisions)}"
+        assert len(collisions) == 1, msg
 
 
 def validate_manifest(manifest="input_manifest.csv"):
@@ -173,7 +200,7 @@ def validate_manifest(manifest="input_manifest.csv"):
 
         # Using a value with spaces or periods will introduce
         # errors later on when R tries to read it in
-        new_comp_col = comp_col.replace(" ", "_").replace(".", "_")
+        new_comp_col = sanitize_label(comp_col)
         df = df.rename(columns=dict({comp_col: new_comp_col}))
         comp_col = new_comp_col
 
@@ -207,12 +234,19 @@ def validate_manifest(manifest="input_manifest.csv"):
         # Make sure there are no extra spaces in the comp_col column
         df[comp_col] = df[comp_col].str.strip()
 
-        # Iterate over each of the unique values in the `comp_col` column
-        for comp_val in df[comp_col].unique():
+        # Label each of the values which will be compared against the
+        # reference, used for both the file name and the column name read by R
+        comp_val_labels = {
+            comp_val: sanitize_label(comp_val)
+            for comp_val in df[comp_col].unique()
+            if comp_val != comp_ref
+        }
 
-            # Skip the comparison reference value
-            if comp_val == comp_ref:
-                continue
+        # Two values sharing a label would overwrite each other's table
+        validate_unique(comp_val_labels)
+
+        # Iterate over each of the unique values in the `comp_col` column
+        for comp_val, comp_val_sanitized in comp_val_labels.items():
 
             msg = f"Formatting a table to compare {comp_val} vs. {comp_ref}"
             logger.info(msg)
@@ -226,9 +260,6 @@ def validate_manifest(manifest="input_manifest.csv"):
                 )
             ]
             logger.info(f"Using {comp_df.shape[0]:,} / {df.shape[0]:,} samples for this comparison")
-
-            # Using a value with spaces or periods will introduce errors later on when R tries to read it in
-            comp_val_sanitized = comp_val.replace(" ", "_").replace(".", "_").replace("-", "_")
 
             # Remove the `comp_col` column, and replace it with
             # a column named for `comp_val_sanitized`, containing either 0 or 1
